@@ -84,12 +84,15 @@ public:
     ptrdiff_t p_inc;
     char *p_dat, *p_end;
     ssize_t nbytes_rx;
+    void configureDisplaySnapshot(int maxFps, int snapshotPoints);
 
 
 signals:
     void iqFrameReady(QVector<qint16> iSamples, QVector<qint16> qSamples, qint64 fs);
+    void iqDisplaySnapshotReady(QVector<qint16> iSamples, QVector<qint16> qSamples, qint64 fs);
 
 private:
+    void maybeEmitDisplaySnapshot(qint64 sampleCount);
     void IIO_ENSURE(int expr, QString reason);
     void shutdownDevice();
     void handle_sig(int sig);
@@ -98,6 +101,7 @@ private:
 
     /* write attribute: long long int */
     bool wr_ch_lli(struct iio_channel* chn, const char* what, long long val);
+    bool wr_ch_lli_or_current(struct iio_channel* chn, const char* what, long long val, long long tolerance);
 
     /* write attribute: string */
     bool wr_ch_str(struct iio_channel* chn, const char* what, const char* str);
@@ -122,6 +126,13 @@ private:
 
     /* applies streaming configuration through IIO */
     bool cfg_ad9361_streaming_ch(struct iio_context* ctx, struct stream_cfg* cfg, enum iodev type, int chid);
+
+    int displayMaxFps_ = 20;
+    int displaySnapshotPoints_ = 4096;
+    qint64 displaySampleInterval_ = 50000;
+    qint64 displaySamplesSinceEmit_ = 0;
+    QVector<qint16> displayCarryI_;
+    QVector<qint16> displayCarryQ_;
 
 public slots:
     void reset_to_emmit();

@@ -2,6 +2,10 @@
 
 #include <QDebug>
 
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+
 #ifdef simulate
 #include "random"
 #endif
@@ -18,8 +22,29 @@ board_read::board_read(QObject *parent, std::size_t buffer_size)
     // I1 = (int16_t*)malloc(sizeof(int16_t) * 1024 * 1024);
     // Q1 = (int16_t*)malloc(sizeof(int16_t) * 1024 * 1024);
 }
+
+void board_read::configureDisplaySnapshot(int maxFps, int snapshotPoints)
+{
+    displayMaxFps_ = std::max(1, maxFps);
+    displaySnapshotPoints_ = std::max(128, snapshotPoints);
+    displaySamplesSinceEmit_ = 0;
+    displayCarryI_.clear();
+    displayCarryQ_.clear();
+    if (rxcfg.fs_hz > 0) {
+        displaySampleInterval_ = std::max<qint64>(1, static_cast<qint64>(rxcfg.fs_hz) / displayMaxFps_);
+        displaySnapshotPoints_ = std::max(displaySnapshotPoints_, static_cast<int>(std::min<qint64>(displaySampleInterval_, 500000)));
+    }
+}
+
 void board_read::config(float bw=5,float fs=10,float lo=1091)
 {
+    const float maxBw = 0.49f * fs;
+    float effectiveBw = bw;
+    if (effectiveBw > maxBw) {
+        qWarning() << "RX bandwidth" << bw << "MHz reaches/exceeds safe Nyquist limit; limiting bandwidth to" << maxBw << "MHz";
+        effectiveBw = maxBw;
+    }
+
     iq_lock = new QMutex;
     config_flag = 1;
     stop_ = true;
@@ -38,10 +63,14 @@ void board_read::config(float bw=5,float fs=10,float lo=1091)
     rxbuf = NULL;
     txbuf = NULL;
     // RX stream config
-    rxcfg.bw_hz = MHZ(bw);   // 2 MHz rf bandwidth
+    rxcfg.bw_hz = MHZ(effectiveBw);   // RF bandwidth, limited to <= 0.5 * fs
     rxcfg.fs_hz = MHZ(fs);   // 2.5 MS/s rx sample rate
     rxcfg.lo_hz = MHZ(lo); // 2.5 GHz rf frequency
     rxcfg.rfport = "A_BALANCED"; // port A (select for rf freq.)
+    displaySampleInterval_ = std::max<qint64>(1, static_cast<qint64>(rxcfg.fs_hz) / std::max(1, displayMaxFps_));
+    displaySnapshotPoints_ = std::max(displaySnapshotPoints_, static_cast<int>(std::min<qint64>(displaySampleInterval_, 500000)));
+    displayCarryI_.clear();
+    displayCarryQ_.clear();
 #ifndef simulate
     if(this->config_flag)
         IIO_ENSURE((ctx = iio_create_context_from_uri(ip)) && "No context","No context");
@@ -60,7 +89,7 @@ void board_read::config(float bw=5,float fs=10,float lo=1091)
     }
     if(this->config_flag)
     {
-        IIO_ENSURE(cfg_ad9361_streaming_ch(ctx, &rxcfg, RX, 0) && "RX port 0 not found","RX port 0 not found");
+        IIO_ENSURE(cfg_ad9361_streaming_ch(ctx, &rxcfg, RX, 0) && "RX config failed","RX config failed; sample rate or bandwidth may not be supported");
         if (!this->config_flag) return;
         // IIO_ENSURE(cfg_ad9361_streaming_ch(ctx, &rxcfg, RX, 1) && "RX port 1 not found","RX port 1 not found");
         //IIO_ENSURE(cfg_ad9361_streaming_ch(ctx, &txcfg, TX, 0) && "TX port 0 not found");
@@ -150,7 +179,8 @@ void board_read::start_read()
                     iFrame[static_cast<int>(n)] = I0[n];
                     qFrame[static_cast<int>(n)] = Q0[n];
                 }
-                emit iqFrameReady(iFrame, qFrame, static_cast<qint64>(rxcfg.fs_hz));
+                emit iqFrameReady(std::move(iFrame), std::move(qFrame), static_cast<qint64>(rxcfg.fs_hz));
+                maybeEmitDisplaySnapshot(cnt);
             }
         }
         qDebug()<<"exit reading";
@@ -161,6 +191,71 @@ void board_read::reset_to_emmit()
 {
     emit_signal_to_process = true;
 }
+
+void board_read::maybeEmitDisplaySnapshot(qint64 sampleCount)
+{
+    if (sampleCount <= 0 || rxcfg.fs_hz <= 0) {
+        return;
+    }
+
+    const qint64 previousSamples = displaySamplesSinceEmit_;
+    const qint64 totalSamples = previousSamples + sampleCount;
+    if (totalSamples >= displaySampleInterval_) {
+        qint64 frameEnd = displaySampleInterval_ - previousSamples;
+        while (frameEnd <= sampleCount) {
+            const qint64 start = frameEnd - displaySnapshotPoints_;
+            const int carryNeeded = start < 0 ? static_cast<int>(std::min<qint64>(-start, displayCarryI_.size())) : 0;
+            const int currentStart = static_cast<int>(std::max<qint64>(0, start));
+            const int currentCount = static_cast<int>(frameEnd - currentStart);
+            const int snapshotCount = carryNeeded + currentCount;
+            if (snapshotCount <= 0) {
+                frameEnd += displaySampleInterval_;
+                continue;
+            }
+
+            QVector<qint16> iSnapshot(snapshotCount);
+            QVector<qint16> qSnapshot(snapshotCount);
+            for (int n = 0; n < carryNeeded; ++n) {
+                const int src = displayCarryI_.size() - carryNeeded + n;
+                iSnapshot[n] = displayCarryI_[src];
+                qSnapshot[n] = displayCarryQ_[src];
+            }
+            for (int n = 0; n < currentCount; ++n) {
+                iSnapshot[carryNeeded + n] = I0[currentStart + n];
+                qSnapshot[carryNeeded + n] = Q0[currentStart + n];
+            }
+            emit iqDisplaySnapshotReady(std::move(iSnapshot), std::move(qSnapshot), static_cast<qint64>(rxcfg.fs_hz));
+            frameEnd += displaySampleInterval_;
+        }
+        displaySamplesSinceEmit_ = totalSamples % displaySampleInterval_;
+    } else {
+        displaySamplesSinceEmit_ = totalSamples;
+    }
+
+    const int keepFromCurrent = static_cast<int>(std::min<qint64>(sampleCount, displaySnapshotPoints_));
+    const qint64 keepStart = sampleCount - keepFromCurrent;
+    QVector<qint16> newCarryI;
+    QVector<qint16> newCarryQ;
+    if (keepFromCurrent < displaySnapshotPoints_ && !displayCarryI_.isEmpty()) {
+        const int keepFromCarry = std::min(displaySnapshotPoints_ - keepFromCurrent, displayCarryI_.size());
+        newCarryI.reserve(keepFromCarry + keepFromCurrent);
+        newCarryQ.reserve(keepFromCarry + keepFromCurrent);
+        for (int n = displayCarryI_.size() - keepFromCarry; n < displayCarryI_.size(); ++n) {
+            newCarryI.append(displayCarryI_[n]);
+            newCarryQ.append(displayCarryQ_[n]);
+        }
+    } else {
+        newCarryI.reserve(keepFromCurrent);
+        newCarryQ.reserve(keepFromCurrent);
+    }
+    for (int n = 0; n < keepFromCurrent; ++n) {
+        newCarryI.append(I0[keepStart + n]);
+        newCarryQ.append(Q0[keepStart + n]);
+    }
+    displayCarryI_ = std::move(newCarryI);
+    displayCarryQ_ = std::move(newCarryQ);
+}
+
 board_read::~board_read()
 {
     free(I0); free(Q0);
@@ -211,6 +306,36 @@ bool board_read::errchk(int v, const char* what) {
 bool board_read::wr_ch_lli(struct iio_channel* chn, const char* what, long long val)
 {
     return errchk(iio_channel_attr_write_longlong(chn, what, val), what);
+}
+
+bool board_read::wr_ch_lli_or_current(struct iio_channel* chn, const char* what, long long val, long long tolerance)
+{
+    const int ret = iio_channel_attr_write_longlong(chn, what, val);
+    if (ret >= 0) {
+        return true;
+    }
+
+    long long current = 0;
+    if (iio_channel_attr_read_longlong(chn, what, &current) >= 0 && std::llabs(current - val) <= tolerance) {
+        qWarning() << "AD9361 kept existing" << what << current << "after write returned" << ret;
+        return true;
+    }
+
+    if (std::strcmp(what, "sampling_frequency") == 0) {
+        char available[1024] = {0};
+        const int availableRet = static_cast<int>(iio_channel_attr_read(chn, "sampling_frequency_available", available, sizeof(available)));
+        if (availableRet > 0) {
+            qWarning() << "AD9361 sampling_frequency write failed. requested=" << val
+                       << "current=" << current
+                       << "available=" << available;
+        } else {
+            qWarning() << "AD9361 sampling_frequency write failed. requested=" << val
+                       << "current=" << current
+                       << "sampling_frequency_available is not readable";
+        }
+    }
+
+    return errchk(ret, what);
 }
 
 /* write attribute: string */
@@ -285,7 +410,7 @@ bool board_read::cfg_ad9361_streaming_ch(struct iio_context* ctx, struct stream_
     if (!get_phy_chan(ctx, type, chid, &chn)) { return false; }
     if (!wr_ch_str(chn, "rf_port_select", cfg->rfport)) return false;
     if (!wr_ch_lli(chn, "rf_bandwidth", cfg->bw_hz)) return false;
-    if (!wr_ch_lli(chn, "sampling_frequency", cfg->fs_hz)) return false;
+    if (!wr_ch_lli_or_current(chn, "sampling_frequency", cfg->fs_hz, 100)) return false;
 
     // Configure LO channel
     printf("* Acquiring AD9361 %s lo channel\n", type == TX ? "TX" : "RX");
@@ -296,7 +421,7 @@ bool board_read::cfg_ad9361_streaming_ch(struct iio_context* ctx, struct stream_
 void board_read::IIO_ENSURE(int expr, QString reason)
 {
     if (!(expr)) { \
-            QMessageBox::warning(NULL, "warning", reason, QMessageBox::Ok);\
+            qWarning() << reason;\
             board_read::config_flag = 0;
     }
 }

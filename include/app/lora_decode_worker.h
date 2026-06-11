@@ -15,6 +15,9 @@ public:
 
 public slots:
     void decodePacket(DetectedLoRaPacket packet);
+
+signals:
+    void decodedLog(QString message);
 };
 
 #endif // LORA_DECODE_WORKER_H

@@ -11,9 +11,52 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>MainWindow</string>
+    <string>LoRa AD9361 Receiver</string>
   </property>
-  <widget class="QWidget" name="centralwidget"/>
+  <widget class="QWidget" name="centralwidget">
+    <layout class="QVBoxLayout" name="verticalLayout">
+     <item>
+      <widget class="QSplitter" name="mainSplitter">
+        <property name="orientation">
+         <enum>Qt::Vertical</enum>
+        </property>
+        <widget class="QWidget" name="spectrumContainer">
+         <layout class="QVBoxLayout" name="spectrumLayout">
+          <property name="leftMargin">
+            <number>0</number>
+          </property>
+          <property name="topMargin">
+            <number>0</number>
+          </property>
+          <property name="rightMargin">
+            <number>0</number>
+          </property>
+          <property name="bottomMargin">
+            <number>0</number>
+          </property>
+         </layout>
+        </widget>
+        <widget class="QGroupBox" name="logGroupBox">
+         <property name="title">
+          <string>Decode Log</string>
+         </property>
+         <layout class="QVBoxLayout" name="logLayout">
+          <item>
+            <widget class="QPlainTextEdit" name="decodeLogEdit">
+             <property name="readOnly">
+              <bool>true</bool>
+             </property>
+             <property name="maximumBlockCount">
+              <number>1000</number>
+             </property>
+            </widget>
+          </item>
+         </layout>
+        </widget>
+      </widget>
+     </item>
+    </layout>
+  </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>

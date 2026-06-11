@@ -4,6 +4,7 @@
 
 #include <QByteArray>
 #include <QDebug>
+#include <QString>
 
 #include <cstdint>
 #include <exception>
@@ -25,7 +26,7 @@ void LoRaDecodeWorker::decodePacket(DetectedLoRaPacket packet)
         lora::LoRaPHY phy(433e6, 7, 125e3, sampleRateHz, 8);
         phy.cr = 1;
         phy.has_header = true;
-        phy.crc = true;
+        phy.crc = false;
         phy.fast_mode = true;
         phy.ideal_fallback_enabled = false;
         phy.zero_padding_ratio = 8;
@@ -48,8 +49,11 @@ void LoRaDecodeWorker::decodePacket(DetectedLoRaPacket packet)
             payload.append(static_cast<char>(b));
         }
 
-        qDebug() << "CFO(Hz)" << packet.cfoHz
-                 << "payload" << QString::fromLatin1(payload);
+        const QString message = QStringLiteral("CFO(Hz) %1  payload %2")
+                        .arg(packet.cfoHz, 0, 'f', 3)
+                        .arg(QString::fromLatin1(payload));
+        qDebug().noquote() << message;
+        emit decodedLog(message);
     } catch (const std::exception& e) {
         qWarning() << "LoRa decode failed:" << e.what();
     }

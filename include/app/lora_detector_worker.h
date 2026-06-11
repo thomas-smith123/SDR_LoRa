@@ -46,9 +46,10 @@ private:
     static constexpr double kBandwidthHz = 125e3;
     static constexpr int kPreambleLen = 8;
     static constexpr int kZeroPaddingRatio = 8;
+    static constexpr int kDetectionPayloadBytes = 64;
     static constexpr int kMaxPayloadBytes = 255;
-    static constexpr size_t kMinBufferedFrames = 3;
-    static constexpr size_t kMaxBufferedFrames = 32;
+    static constexpr size_t kMinBufferedFrames = 2;
+    static constexpr size_t kMaxBufferedFrames = 16;
 
     void resetPhyIfNeeded(qint64 sampleRateHz);
     void appendToRing(const QVector<qint16>& iSamples, const QVector<qint16>& qSamples);

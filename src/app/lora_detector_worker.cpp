@@ -3,6 +3,7 @@
 #include "LoRaPHY.hpp"
 
 #include <QDebug>
+#include <QElapsedTimer>
 
 #include <algorithm>
 #include <cmath>
@@ -29,6 +30,8 @@ void LoRaDetectorWorker::processIqFrame(QVector<qint16> iSamples, QVector<qint16
 
     state_ = DetectorState::Searching;
     const auto streamBuffer = ringSnapshot();
+    QElapsedTimer detectTimer;
+    detectTimer.start();
 
     try {
         lora::LoRaPHY phy(kRfFreqHz, kSf, kBandwidthHz, static_cast<double>(sampleRateHz_), kPreambleLen);
@@ -42,6 +45,13 @@ void LoRaDetectorWorker::processIqFrame(QVector<qint16> iSamples, QVector<qint16
         phy.init();
 
         auto packets = phy.demodulate(streamBuffer);
+        const qint64 detectMs = detectTimer.elapsed();
+        if (detectMs > 150) {
+            qWarning() << "LoRa detector slow"
+                       << detectMs << "ms"
+                       << "samples" << streamBuffer.size()
+                       << "packets" << packets.size();
+        }
 
         size_t maxConsumed = 0;
         const size_t safeCompleteLimit = streamBuffer.size() > overlapSamples()
@@ -62,9 +72,7 @@ void LoRaDetectorWorker::processIqFrame(QVector<qint16> iSamples, QVector<qint16
             verifyPhy.init();
             try {
                 const auto verify = verifyPhy.decode(packet.symbols);
-                if (verify.checksum.size() != 2) {
-                    // 发射端关闭 PHY CRC 时这是正常情况，继续交给重复包过滤。
-                } else if (!verify.crc_ok) {
+                if (verify.checksum.size() == 2 && !verify.crc_ok) {
                     qWarning() << "Drop LoRa packet with CRC FAIL"
                                << "symbols" << packet.symbols.size()
                                << "CFO(Hz)" << packet.cfo_hz
@@ -106,16 +114,14 @@ void LoRaDetectorWorker::processIqFrame(QVector<qint16> iSamples, QVector<qint16
         if (maxConsumed > 0) {
             trimStreamBuffer(maxConsumed);
         } else if (iqRing_.size() >= maxRingSamples()) {
-            // 保守模式：未确认输出有效包前不主动裁剪 IQ，避免把跨窗口帧裁掉。
-            // 如果这里持续出现，说明检测/解码速度跟不上采样输入，需要继续优化算法或降低采样率。
-            qWarning() << "LoRa detector ring is full but no confirmed packet was consumed; keep IQ to avoid data loss"
+            qWarning() << "LoRa detector ring is full but no confirmed packet was consumed; keep IQ for accuracy"
                        << "ring" << iqRing_.size()
                        << "limit" << maxRingSamples();
         }
     } catch (const std::exception& e) {
         qWarning() << "LoRa detect/demod failed:" << e.what();
         if (iqRing_.size() >= maxRingSamples()) {
-            qWarning() << "LoRa detector keeps IQ after exception to avoid data loss"
+            qWarning() << "LoRa detector keeps IQ after exception to preserve accuracy"
                        << "ring" << iqRing_.size()
                        << "limit" << maxRingSamples();
         }
@@ -145,9 +151,12 @@ void LoRaDetectorWorker::appendToRing(const QVector<qint16>& iSamples, const QVe
     }
 
     if (iqRing_.size() > maxRingSamples()) {
-        qWarning() << "LoRa detector ring exceeds target capacity; not dropping IQ"
+        const size_t dropCount = iqRing_.size() - maxRingSamples();
+        qWarning() << "LoRa detector ring exceeds target capacity; drop oldest IQ"
                    << "ring" << iqRing_.size()
-                   << "target" << maxRingSamples();
+                   << "target" << maxRingSamples()
+                   << "drop" << dropCount;
+        discardFrontSamples(dropCount);
     }
 }
 
@@ -190,7 +199,7 @@ void LoRaDetectorWorker::discardFrontSamples(size_t samples)
 
 size_t LoRaDetectorWorker::processWindowSamples() const
 {
-    return kMinBufferedFrames * estimatedFrameSamples(kMaxPayloadBytes);
+    return kMinBufferedFrames * estimatedFrameSamples(kDetectionPayloadBytes);
 }
 
 size_t LoRaDetectorWorker::maxRingSamples() const
