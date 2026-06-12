@@ -133,10 +133,12 @@ private:
     qint64 displaySamplesSinceEmit_ = 0;
     QVector<qint16> displayCarryI_;
     QVector<qint16> displayCarryQ_;
+    QMutex iioMutex_;
 
 public slots:
     void reset_to_emmit();
     void start_read();
+    void setRxCenterFrequencyHz(qint64 frequencyHz);
     // void stop();
 };
 

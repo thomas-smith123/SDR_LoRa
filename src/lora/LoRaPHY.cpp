@@ -226,6 +226,128 @@ std::vector<DemodPacket> LoRaPHY::demodulate(const std::vector<std::complex<doub
     return packets;
 }
 
+StreamingDemodResult LoRaPHY::scanNextFrame(const std::vector<std::complex<double>>& input, size_t start_idx) {
+    const int saved_cr = cr;
+    const bool saved_crc = crc;
+    const int saved_payload_len = payload_len;
+
+    auto restore = [&]() {
+        cr = saved_cr;
+        crc = saved_crc;
+        payload_len = saved_payload_len;
+    };
+
+    cfo_ = 0.0;
+    init();
+    raw_sig_ = input;
+    sig_ = input;
+
+    StreamingDemodResult result;
+    if (start_idx >= sig_.size()) {
+        restore();
+        return result;
+    }
+
+    const int dx = detect(start_idx);
+    if (dx < 0) {
+        const size_t keep = static_cast<size_t>(std::ceil((preamble_len + 6.0) * sample_num_));
+        result.status = StreamingDemodResult::Status::NoPreamble;
+        result.consumed_samples = sig_.size() > keep ? sig_.size() - keep : 0;
+        restore();
+        return result;
+    }
+
+    size_t frame_start = static_cast<size_t>(std::max(dx, 0));
+    int refined = refinePreambleStart(frame_start);
+    if (refined >= 0) frame_start = static_cast<size_t>(refined);
+
+    const size_t min_header_end = frame_start + static_cast<size_t>(std::ceil((preamble_len + 4.25 + 8.0) * sample_num_));
+    if (sig_.size() < min_header_end) {
+        result.status = StreamingDemodResult::Status::NeedMoreSamples;
+        result.required_samples = min_header_end;
+        result.consumed_samples = frame_start;
+        restore();
+        return result;
+    }
+
+    int sx = sync(frame_start);
+    if (sx < 0) {
+        result.status = StreamingDemodResult::Status::BadCandidate;
+        result.consumed_samples = frame_start + static_cast<size_t>(sample_num_);
+        restore();
+        return result;
+    }
+
+    size_t x = static_cast<size_t>(sx);
+    if (x > sig_.size() || sig_.size() - x < static_cast<size_t>(8 * sample_num_)) {
+        result.status = StreamingDemodResult::Status::NeedMoreSamples;
+        result.required_samples = x + static_cast<size_t>(8 * sample_num_);
+        result.consumed_samples = frame_start;
+        restore();
+        return result;
+    }
+
+    if (x < static_cast<size_t>(std::llround(4.25 * sample_num_))) {
+        result.status = StreamingDemodResult::Status::BadCandidate;
+        result.consumed_samples = x + static_cast<size_t>(sample_num_);
+        restore();
+        return result;
+    }
+
+    DemodPacket packet;
+    auto pk_netid1 = dechirp(static_cast<size_t>(std::llround(static_cast<double>(x) - 4.25 * sample_num_)));
+    auto pk_netid2 = dechirp(static_cast<size_t>(std::llround(static_cast<double>(x) - 3.25 * sample_num_)));
+    packet.net_id = {
+        binToSymbol(pk_netid1.bin - preamble_bin_),
+        binToSymbol(pk_netid2.bin - preamble_bin_)
+    };
+
+    for (int ii = 0; ii < 8; ++ii) {
+        auto pk = dechirp(x + static_cast<size_t>(ii * sample_num_));
+        packet.symbols.push_back(binToSymbol(pk.bin - preamble_bin_));
+    }
+
+    if (has_header && !parseHeader(packet.symbols)) {
+        result.status = StreamingDemodResult::Status::BadCandidate;
+        result.consumed_samples = x + static_cast<size_t>(7 * sample_num_);
+        restore();
+        return result;
+    }
+
+    const int sym_num = calcSymNum(payload_len);
+    const size_t required = x + static_cast<size_t>(sym_num * sample_num_);
+    if (sig_.size() < required) {
+        result.status = StreamingDemodResult::Status::NeedMoreSamples;
+        result.required_samples = required;
+        result.consumed_samples = frame_start;
+        restore();
+        return result;
+    }
+
+    for (int ii = 8; ii < sym_num; ++ii) {
+        auto pk = dechirp(x + static_cast<size_t>(ii * sample_num_));
+        packet.symbols.push_back(binToSymbol(pk.bin - preamble_bin_));
+    }
+
+    auto comp = dynamicCompensation(packet.symbols);
+    for (size_t i = 8; i < comp.size(); ++i) {
+        packet.symbols[i] = posmod(static_cast<int>(std::llround(comp[i])), 1 << sf_);
+    }
+
+    packet.cfo_hz = cfo_;
+    packet.data_start_sample = x;
+    const size_t frame_prefix = static_cast<size_t>(std::llround((preamble_len + 4.25) * sample_num_));
+    packet.frame_start_sample = (x >= frame_prefix) ? (x - frame_prefix) : frame_start;
+    packet.frame_end_sample = required;
+
+    result.status = StreamingDemodResult::Status::PacketReady;
+    result.packet = std::move(packet);
+    result.consumed_samples = result.packet.frame_end_sample;
+    result.required_samples = result.packet.frame_end_sample;
+    restore();
+    return result;
+}
+
 // LoRa 接收链路后半段：符号 -> Gray 逆处理 -> deinterleave -> Hamming -> dewhitening -> payload/CRC。
 DecodeResult LoRaPHY::decode(const std::vector<int>& symbols) {
     if (symbols.size() < 8) throw std::runtime_error("Not enough symbols to decode LoRa PHY header");

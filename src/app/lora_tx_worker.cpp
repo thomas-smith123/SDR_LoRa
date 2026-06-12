@@ -65,6 +65,13 @@ void LoRaTxWorker::setExplicitHeader(bool enabled)
     explicitHeader_ = enabled;
 }
 
+void LoRaTxWorker::setZeroPaddingRatio(int zeroPaddingRatio)
+{
+    if (zeroPaddingRatio > 0) {
+        zeroPaddingRatio_ = zeroPaddingRatio;
+    }
+}
+
 void LoRaTxWorker::transmitPayload(const QByteArray& payload)
 {
     try {
@@ -105,7 +112,7 @@ std::vector<std::complex<double>> LoRaTxWorker::buildBasebandIq(const QByteArray
     phy.crc = crcEnabled_;
     phy.fast_mode = true;
     phy.ideal_fallback_enabled = false;
-    phy.zero_padding_ratio = 8;
+    phy.zero_padding_ratio = zeroPaddingRatio_;
     phy.init();
 
     const auto symbols = phy.encode(bytes);

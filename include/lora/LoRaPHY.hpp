@@ -26,6 +26,21 @@ struct DecodeResult {
     bool crc_ok = true; // crc=false 时保持 true；crc=true 时表示收到的 CRC 是否匹配重新计算结果
 };
 
+// 流式扫描结果：用于上层 ring buffer 状态机区分“没找到/还不完整/已完整/坏候选”。
+struct StreamingDemodResult {
+    enum class Status {
+        NoPreamble,
+        NeedMoreSamples,
+        BadCandidate,
+        PacketReady
+    };
+
+    Status status = Status::NoPreamble;
+    DemodPacket packet;
+    size_t consumed_samples = 0; // 可安全丢弃的输入前缀长度
+    size_t required_samples = 0; // NeedMoreSamples 时希望 ring 至少保留到的样本数
+};
+
 // LoRa 物理层编解码器。
 // 当前实现面向基带复数 IQ：支持 payload 编码、LoRa chirp 调制、包检测/同步、符号解调和 payload 解码。
 class LoRaPHY {
@@ -55,6 +70,10 @@ public:
 
     // 从复数 IQ 中检测 LoRa 包并解调成符号；真实 SDR 数据应使用此入口。
     std::vector<DemodPacket> demodulate(const std::vector<std::complex<double>>& input);
+
+    // 从连续 IQ 快照中扫描下一帧。该接口不会为了固定 payload 长度截窗，
+    // 而是在 explicit header 解出真实 payload 长度后返回完整帧或 NeedMoreSamples。
+    StreamingDemodResult scanNextFrame(const std::vector<std::complex<double>>& input, size_t start_idx = 0);
 
     // 将解调得到的符号还原为 payload 字节，并解析 header/CRC。
     DecodeResult decode(const std::vector<int>& symbols);

@@ -1,6 +1,7 @@
 #include "board_read.h"
 
 #include <QDebug>
+#include <QMutexLocker>
 
 #include <algorithm>
 #include <cstdlib>
@@ -158,7 +159,10 @@ void board_read::start_read()
             // if (sharedresources->emit_signal_to_process)
             {
                 // Refill RX buffer
-                nbytes_rx = iio_buffer_refill(rxbuf);
+                {
+                    QMutexLocker locker(&iioMutex_);
+                    nbytes_rx = iio_buffer_refill(rxbuf);
+                }
                 if (nbytes_rx < 0) { printf("Error refilling buf %d\n", (int)nbytes_rx); shutdownDevice(); }
                 // READ: Get pointers to RX buf and read IQ from RX buf port 0.
                 // libiio buffer metadata can change after refill, so refresh it every time.
@@ -190,6 +194,34 @@ void board_read::start_read()
 void board_read::reset_to_emmit()
 {
     emit_signal_to_process = true;
+}
+
+void board_read::setRxCenterFrequencyHz(qint64 frequencyHz)
+{
+    if (frequencyHz <= 0) {
+        return;
+    }
+
+    rxcfg.lo_hz = static_cast<long long>(frequencyHz);
+#ifndef simulate
+    if (!ctx) {
+        qWarning() << "AD9361 retune skipped: no active IIO context";
+        return;
+    }
+
+    struct iio_channel* loChannel = nullptr;
+    if (!get_lo_chan(ctx, RX, &loChannel) || !loChannel) {
+        qWarning() << "AD9361 retune failed: RX LO channel not found";
+        return;
+    }
+
+    QMutexLocker locker(&iioMutex_);
+    if (iio_channel_attr_write_longlong(loChannel, "frequency", rxcfg.lo_hz) < 0) {
+        qWarning() << "AD9361 retune failed" << rxcfg.lo_hz;
+        return;
+    }
+#endif
+    qInfo() << "AD9361 RX center frequency set to" << rxcfg.lo_hz << "Hz";
 }
 
 void board_read::maybeEmitDisplaySnapshot(qint64 sampleCount)

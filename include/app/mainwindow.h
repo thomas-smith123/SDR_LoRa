@@ -45,12 +45,29 @@ private:
         int displaySnapshotPoints = 4096;
         int displayFftPoints = 512;
         int displayWaterfallRows = 80;
+        double spectrumMinDb = -120.0;
+        double spectrumMaxDb = 20.0;
+        double loraFrequencyMHz = 433.0;
+        double loraBandwidthKHz = 125.0;
+        int loraSpreadingFactor = 7;
+        int loraPreambleSymbols = 8;
+        int loraCodingRate = 1;
+        bool loraExplicitHeader = true;
+        bool loraPhyCrc = false;
+        int loraZeroPaddingRatio = 8;
+        int loraMaxPayloadBytes = 255;
+        int loraMaxBufferedFrames = 16;
+        bool saveSignalsEnabled = false;
+        QString saveSignalsRoot = QStringLiteral("detected_iq");
+        QString saveIdDirectoryPrefix;
+        QString saveFileNamePrefix;
     };
 
     AppConfig loadConfig() const;
     void setupDisplayUi();
     void appendDecodeLog(const QString& message);
     void startSimulatedSpectrum();
+    void requestCenterFrequencyShift(double deltaHz);
 
     Ui::MainWindow *ui;
     AppConfig config_;
@@ -66,5 +83,6 @@ private:
     QThread *txThread_ = nullptr;
     LoRaTxWorker *txWorker_ = nullptr;
     QTimer *simulationTimer_ = nullptr;
+    qint64 currentCenterFrequencyHz_ = 0;
 };
 #endif // MAINWINDOW_H

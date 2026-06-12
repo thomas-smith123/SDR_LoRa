@@ -19,6 +19,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 #include <random>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -26,6 +27,7 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     config_ = loadConfig();
+    currentCenterFrequencyHz_ = static_cast<qint64>(std::llround(static_cast<double>(config_.rxFrequencyMHz) * 1.0e6));
     ui->setupUi(this);
     setupDisplayUi();
 
@@ -67,6 +69,40 @@ void MainWindow::startAd9361Receiver()
     spectrumWorker_ = new SpectrumCalcWorker;
     spectrumWorker_->configure(config_.displayFftPoints);
     txWorker_ = new LoRaTxWorker;
+
+    const double loraFrequencyHz = config_.loraFrequencyMHz * 1.0e6;
+    const double loraBandwidthHz = config_.loraBandwidthKHz * 1.0e3;
+    detectorWorker_->configure(loraFrequencyHz,
+                               config_.loraSpreadingFactor,
+                               loraBandwidthHz,
+                               config_.loraPreambleSymbols,
+                               config_.loraCodingRate,
+                               config_.loraExplicitHeader,
+                               config_.loraPhyCrc,
+                               config_.loraZeroPaddingRatio,
+                               config_.loraMaxPayloadBytes,
+                               config_.loraMaxBufferedFrames,
+                               config_.saveSignalsEnabled);
+    decodeWorker_->configure(loraFrequencyHz,
+                             config_.loraSpreadingFactor,
+                             loraBandwidthHz,
+                             config_.loraPreambleSymbols,
+                             config_.loraCodingRate,
+                             config_.loraExplicitHeader,
+                             config_.loraPhyCrc,
+                             config_.loraZeroPaddingRatio);
+    decodeWorker_->configureSignalSaving(config_.saveSignalsEnabled,
+                                         config_.saveSignalsRoot,
+                                         config_.saveIdDirectoryPrefix,
+                                         config_.saveFileNamePrefix);
+    txWorker_->setRfFrequency(loraFrequencyHz);
+    txWorker_->setBandwidth(loraBandwidthHz);
+    txWorker_->setSpreadingFactor(config_.loraSpreadingFactor);
+    txWorker_->setCodingRate(config_.loraCodingRate);
+    txWorker_->setPreambleLength(config_.loraPreambleSymbols);
+    txWorker_->setCrcEnabled(config_.loraPhyCrc);
+    txWorker_->setExplicitHeader(config_.loraExplicitHeader);
+    txWorker_->setZeroPaddingRatio(config_.loraZeroPaddingRatio);
 
     // AD9361 URI 需要保持 QByteArray 生命周期直到 config() 完成；board_read 只在配置阶段使用该指针。
     QByteArray uriBytes = config_.ad9361Uri.toLatin1();
@@ -139,6 +175,10 @@ void MainWindow::startAd9361Receiver()
     // FFT worker 算出一帧功率谱后回到 UI widget 显示线谱和瀑布图。
     connect(spectrumWorker_, &SpectrumCalcWorker::spectrumReady, spectrumWidget_, &SpectrumWaterfallWidget::showSpectrum, Qt::QueuedConnection);
 
+        // 交互调谐链路：用户在瀑布图上左右拖动 -> 计算频偏 -> queued 到 AD9361 RX 线程写 LO frequency。
+        connect(spectrumWidget_, &SpectrumWaterfallWidget::centerFrequencyShiftRequested,
+            this, &MainWindow::requestCenterFrequencyShift);
+
     // 解码链路：完整 RX IQ frame 送入 detector，不使用显示快照，保证解码数据连续。
     connect(rxReader_, &board_read::iqFrameReady, detectorWorker_, &LoRaDetectorWorker::processIqFrame, Qt::QueuedConnection);
 
@@ -171,7 +211,16 @@ void MainWindow::startAd9361Receiver()
     connect(txThread_, &QThread::finished, txWorker_, &QObject::deleteLater);
     connect(txThread_, &QThread::finished, txThread_, &QObject::deleteLater);
 
-    qDebug() << "Start AD9361 LoRa receiver. RF=" << config_.rxFrequencyMHz << "MHz BW=" << selectedBandwidthMHz << "MHz FS=" << selectedSampleRateMHz << "MSps LoRaBW=125k SF=7 pipeline=rx->detect->decode";
+    txWorker_->setSampleRate(static_cast<qint64>(std::llround(selectedSampleRateMHz * 1.0e6)));
+
+    qDebug() << "Start AD9361 LoRa receiver. RF=" << config_.rxFrequencyMHz
+             << "MHz BW=" << selectedBandwidthMHz
+             << "MHz FS=" << selectedSampleRateMHz
+             << "MSps LoRaBW=" << config_.loraBandwidthKHz
+             << "kHz SF=" << config_.loraSpreadingFactor
+             << "CR=" << config_.loraCodingRate
+             << "preamble=" << config_.loraPreambleSymbols
+             << "pipeline=rx->detect->decode";
     // 先启动处理线程，再启动 RX 线程；避免 RX 一开始发出 queued signal 时接收线程尚未运行。
     detectorThread_->start();
     decodeThread_->start();
@@ -209,6 +258,22 @@ MainWindow::AppConfig MainWindow::loadConfig() const
     cfg.displaySnapshotPoints = settings.value(QStringLiteral("display/snapshot_points"), cfg.displaySnapshotPoints).toInt();
     cfg.displayFftPoints = settings.value(QStringLiteral("display/fft_points"), cfg.displayFftPoints).toInt();
     cfg.displayWaterfallRows = settings.value(QStringLiteral("display/waterfall_rows"), cfg.displayWaterfallRows).toInt();
+    cfg.spectrumMinDb = settings.value(QStringLiteral("display/spectrum_min_db"), cfg.spectrumMinDb).toDouble();
+    cfg.spectrumMaxDb = settings.value(QStringLiteral("display/spectrum_max_db"), cfg.spectrumMaxDb).toDouble();
+    cfg.loraFrequencyMHz = settings.value(QStringLiteral("lora/frequency_mhz"), cfg.loraFrequencyMHz).toDouble();
+    cfg.loraBandwidthKHz = settings.value(QStringLiteral("lora/bandwidth_khz"), cfg.loraBandwidthKHz).toDouble();
+    cfg.loraSpreadingFactor = settings.value(QStringLiteral("lora/spreading_factor"), cfg.loraSpreadingFactor).toInt();
+    cfg.loraPreambleSymbols = settings.value(QStringLiteral("lora/preamble_symbols"), cfg.loraPreambleSymbols).toInt();
+    cfg.loraCodingRate = settings.value(QStringLiteral("lora/coding_rate"), cfg.loraCodingRate).toInt();
+    cfg.loraExplicitHeader = settings.value(QStringLiteral("lora/explicit_header"), cfg.loraExplicitHeader).toBool();
+    cfg.loraPhyCrc = settings.value(QStringLiteral("lora/phy_crc"), cfg.loraPhyCrc).toBool();
+    cfg.loraZeroPaddingRatio = settings.value(QStringLiteral("lora/zero_padding_ratio"), cfg.loraZeroPaddingRatio).toInt();
+    cfg.loraMaxPayloadBytes = settings.value(QStringLiteral("lora/max_payload_bytes"), cfg.loraMaxPayloadBytes).toInt();
+    cfg.loraMaxBufferedFrames = settings.value(QStringLiteral("lora/max_buffered_frames"), cfg.loraMaxBufferedFrames).toInt();
+    cfg.saveSignalsEnabled = settings.value(QStringLiteral("save/enable_signal_npy"), cfg.saveSignalsEnabled).toBool();
+    cfg.saveSignalsRoot = settings.value(QStringLiteral("save/root_dir"), cfg.saveSignalsRoot).toString();
+    cfg.saveIdDirectoryPrefix = settings.value(QStringLiteral("save/id_dir_prefix"), cfg.saveIdDirectoryPrefix).toString();
+    cfg.saveFileNamePrefix = settings.value(QStringLiteral("save/file_name_prefix"), cfg.saveFileNamePrefix).toString();
     return cfg;
 }
 
@@ -218,6 +283,8 @@ void MainWindow::setupDisplayUi()
     // 显示参数来自 config.ini，保证接收与显示刷新策略可单独调整。
     spectrumWidget_ = new SpectrumWaterfallWidget(this);
     spectrumWidget_->configureDisplay(config_.displayMaxFps, config_.displaySnapshotPoints, config_.displayWaterfallRows, config_.displayFftPoints);
+    spectrumWidget_->configureSpectrumRange(config_.spectrumMinDb, config_.spectrumMaxDb);
+    spectrumWidget_->setCenterFrequencyHz(currentCenterFrequencyHz_);
     ui->spectrumLayout->addWidget(spectrumWidget_);
     ui->mainSplitter->setStretchFactor(0, 4);
     ui->mainSplitter->setStretchFactor(1, 1);
@@ -256,6 +323,24 @@ void MainWindow::startSimulatedSpectrum()
         spectrumWidget_->showSpectrum(std::move(spectrumDb), sampleRateHz);
     });
     simulationTimer_->start(intervalMs);
+}
+
+void MainWindow::requestCenterFrequencyShift(double deltaHz)
+{
+    if (deltaHz == 0.0) {
+        return;
+    }
+
+    const qint64 newFrequencyHz = std::max<qint64>(1, currentCenterFrequencyHz_ + static_cast<qint64>(std::llround(deltaHz)));
+    currentCenterFrequencyHz_ = newFrequencyHz;
+    spectrumWidget_->setCenterFrequencyHz(currentCenterFrequencyHz_);
+    appendDecodeLog(QStringLiteral("Center frequency -> %1 MHz").arg(static_cast<double>(currentCenterFrequencyHz_) / 1.0e6, 0, 'f', 6));
+
+    if (rxReader_) {
+        // board_read::start_read() 在 RX 线程里长期阻塞读取，queued slot 不会及时执行；
+        // 这里直接写 LO，并由 board_read 内部互斥锁保护 libiio 访问。
+        rxReader_->setRxCenterFrequencyHz(currentCenterFrequencyHz_);
+    }
 }
 
 void MainWindow::transmitLoRaPayload(const QByteArray& payload)

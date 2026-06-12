@@ -22,6 +22,7 @@ public:
     void setPreambleLength(int preambleLength);
     void setCrcEnabled(bool enabled);
     void setExplicitHeader(bool enabled);
+    void setZeroPaddingRatio(int zeroPaddingRatio);
 
 public slots:
     // 预留发射入口：生成 LoRa 基带 IQ。后续接 AD9361 TX buffer 时，可在这里继续写入硬件。
@@ -43,6 +44,7 @@ private:
     int preambleLength_ = 8;
     bool crcEnabled_ = false;
     bool explicitHeader_ = true;
+    int zeroPaddingRatio_ = 8;
 };
 
 #endif // LORA_TX_WORKER_H
