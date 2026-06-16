@@ -2,6 +2,7 @@
 
 #include "qcustomplot.h"
 
+#include <QDebug>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
@@ -47,7 +48,7 @@ protected:
             painter.drawLine(x, plot.bottom(), x, plot.bottom() + 5);
             const double freqMHz = centerMHz + (static_cast<double>(i) / 4.0 - 0.5) * spanMHz;
             const QString label = owner_->centerFrequencyHz_ > 0
-                                      ? QString::number(freqMHz, 'f', 3)
+                                      ? QString::number(freqMHz, 'f', 5)
                                       : QStringLiteral("%1 k").arg(QString::number((static_cast<double>(i) / 4.0 - 0.5) * sampleRateHz / 1000.0, 'f', 0));
             painter.drawText(QRect(x - 42, plot.bottom() + 7, 84, 18), Qt::AlignCenter, label);
         }
@@ -69,6 +70,19 @@ protected:
         }
     }
 
+private:
+    QRect plotRect() const
+    {
+        // Left: 60 for Y-axis labels, Top: 10, Right: 15, Bottom: 50 for X-axis labels
+        return rect().adjusted(60, 10, -15, -50);
+    }
+
+    SpectrumWaterfallWidget *owner_ = nullptr;
+    bool dragging_ = false;
+    QPoint dragStart_;
+    QPoint lastPos_;
+
+protected:
     void mousePressEvent(QMouseEvent *event) override
     {
         if (event->button() != Qt::LeftButton || !plotRect().contains(event->pos())) {
@@ -101,16 +115,17 @@ protected:
         update();
     }
 
-private:
-    QRect plotRect() const
+    void enterEvent(QEnterEvent *event) override
     {
-        return rect().adjusted(70, 10, -15, -40);
+        setCursor(Qt::SizeHorCursor);
+        QWidget::enterEvent(event);
     }
 
-    SpectrumWaterfallWidget *owner_ = nullptr;
-    bool dragging_ = false;
-    QPoint dragStart_;
-    QPoint lastPos_;
+    void leaveEvent(QEvent *event) override
+    {
+        setCursor(Qt::ArrowCursor);
+        QWidget::leaveEvent(event);
+    }
 };
 
 SpectrumWaterfallWidget::SpectrumWaterfallWidget(QWidget *parent)
@@ -125,6 +140,11 @@ SpectrumWaterfallWidget::SpectrumWaterfallWidget(QWidget *parent)
     spectrumPlot_->yAxis->setLabel("Power (dB)");
     spectrumPlot_->yAxis->setRange(-100.0, 20.0);
     spectrumPlot_->setOpenGl(true);
+    // Windows 字体渲染需要更大的边距，确保坐标轴标签完整显示
+    spectrumPlot_->axisRect()->setAutoMargins(QCP::msAll);
+    spectrumPlot_->axisRect()->setMinimumMargins({50, 20, 15, 20});
+    // 频谱图最小高度，保证坐标轴和曲线有足够显示空间
+    spectrumPlot_->setMinimumHeight(180);
 
     waterfallImage_ = QImage(fftPoints_, waterfallRows_, QImage::Format_RGB32);
     waterfallImage_.fill(Qt::black);
@@ -132,7 +152,7 @@ SpectrumWaterfallWidget::SpectrumWaterfallWidget(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 4, 4, 4);
     layout->addWidget(spectrumPlot_, 1);
-    layout->addWidget(waterfallWidget_, 2);
+    layout->addWidget(waterfallWidget_, 1);
     setLayout(layout);
     displayTimer_.start();
 }
@@ -161,6 +181,9 @@ void SpectrumWaterfallWidget::configureSpectrumRange(double minDb, double maxDb)
 void SpectrumWaterfallWidget::setCenterFrequencyHz(qint64 centerFrequencyHz)
 {
     centerFrequencyHz_ = centerFrequencyHz;
+    // 更新频谱图 X 轴标题，显示当前中心频率（MHz）
+    spectrumPlot_->xAxis->setLabel(QString("Frequency offset (kHz) @ %1 MHz")
+        .arg(static_cast<double>(centerFrequencyHz) / 1.0e6, 0, 'f', 3));
     waterfallWidget_->update();
 }
 
@@ -232,12 +255,16 @@ void SpectrumWaterfallWidget::updateWaterfallImage(const QVector<double>& spectr
 
 void SpectrumWaterfallWidget::handleWaterfallDragFinished(int deltaPixels, int plotWidthPixels)
 {
-    if (plotWidthPixels <= 0 || lastSampleRateHz_ <= 0 || deltaPixels == 0) {
+    if (plotWidthPixels <= 0 || deltaPixels == 0) {
         return;
     }
 
-    // 拖动含义：把图像向右拖，等价于中心频率向低频侧移动；灵敏度为当前可见带宽。
-    const double deltaHz = -static_cast<double>(deltaPixels) / static_cast<double>(plotWidthPixels) * static_cast<double>(lastSampleRateHz_);
+    // 使用已知的采样率；如果从未收到数据帧，使用默认值 1e6。
+    const double sampleRateHz = lastSampleRateHz_ > 0 ? static_cast<double>(lastSampleRateHz_) : 1.0e6;
+    // 拖拽灵敏度：拖动一个完整宽度对应 ±2x 采样率的频偏，让无硬件模拟模式下
+    // 小幅度拖拽也能产生明显的 MHz 级变化，坐标轴可见。
+    const double deltaHz = -static_cast<double>(deltaPixels) / static_cast<double>(plotWidthPixels) * 2.0 * sampleRateHz;
+    qDebug() << "Waterfall drag:" << deltaPixels << "px, deltaHz=" << deltaHz;
     emit centerFrequencyShiftRequested(deltaHz);
 }
 

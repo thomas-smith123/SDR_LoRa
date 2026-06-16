@@ -22,6 +22,8 @@
 #include "stm32l0xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "UserConfig.h"
+#include "sx126x.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -55,6 +57,8 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
+
+extern RTC_HandleTypeDef hrtc;
 
 /* USER CODE BEGIN EV */
 
@@ -141,5 +145,25 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /* USER CODE BEGIN 1 */
+
+void RTC_IRQHandler(void)
+{
+  HAL_RTCEx_WakeUpTimerIRQHandler(&hrtc);
+}
+
+void EXTI0_1_IRQHandler(void)
+{
+  HAL_GPIO_EXTI_IRQHandler(LCC68_DIO1_PIN);
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == LCC68_DIO1_PIN)
+  {
+    IrqFired = true;
+    sx126x_get_irq_status(NULL, &radioFlag);
+    sx126x_clear_irq_status(NULL, SX126X_IRQ_ALL);
+  }
+}
 
 /* USER CODE END 1 */

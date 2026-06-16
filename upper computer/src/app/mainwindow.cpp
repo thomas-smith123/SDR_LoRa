@@ -333,6 +333,7 @@ void MainWindow::requestCenterFrequencyShift(double deltaHz)
 
     const qint64 newFrequencyHz = std::max<qint64>(1, currentCenterFrequencyHz_ + static_cast<qint64>(std::llround(deltaHz)));
     currentCenterFrequencyHz_ = newFrequencyHz;
+    qDebug() << "Center frequency shift:" << deltaHz << "Hz, new=" << static_cast<double>(currentCenterFrequencyHz_) / 1.0e6 << "MHz";
     spectrumWidget_->setCenterFrequencyHz(currentCenterFrequencyHz_);
     appendDecodeLog(QStringLiteral("Center frequency -> %1 MHz").arg(static_cast<double>(currentCenterFrequencyHz_) / 1.0e6, 0, 'f', 6));
 

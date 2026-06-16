@@ -124,7 +124,7 @@ void LoRaDecodeWorker::decodePacket(DetectedLoRaPacket packet)
 LoRaDecodeWorker::ParsedPayload LoRaDecodeWorker::parsePayload(const QString& payloadText) const
 {
     static const QRegularExpression pattern(
-        QStringLiteral(R"(^\s*ID:([^,]+),\s*TEMP:([^,]+),\s*MAG:([^,]+),\s*Volt:([^,\r\n]+)\s*$)"),
+        QStringLiteral(R"(^\s*ID:([^,]+),\s*TEMP:([^,]+),\s*Volt:([^,]+),\s*MAG:([^\.\r\n]+)\.\s*$)"),
         QRegularExpression::CaseInsensitiveOption);
     ParsedPayload parsed;
     const QRegularExpressionMatch match = pattern.match(payloadText);
@@ -135,8 +135,8 @@ LoRaDecodeWorker::ParsedPayload LoRaDecodeWorker::parsePayload(const QString& pa
     parsed.valid = true;
     parsed.id = match.captured(1).trimmed();
     parsed.temp = match.captured(2).trimmed();
-    parsed.mag = match.captured(3).trimmed();
-    parsed.volt = match.captured(4).trimmed();
+    parsed.volt = match.captured(3).trimmed();
+    parsed.mag = match.captured(4).trimmed();
     return parsed;
 }
 

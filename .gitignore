@@ -1,0 +1,48 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Build outputs
+build/
+bin/
+*.o
+*.obj
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.log
+
+# Qt generated files
+*.pro.user
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# Keil / MDK generated files
+*.uvguix.*
+*.scvd
+*.uvoptx.bak
+*.dep
+*.d
+*.crf
+*.htm
+*.lnp
+*.axf
+*.iex
+*.sct
+*.tra
+*.plg
+*.bak
+*.orig
+JLinkLog.txt
+JLinkSettings.ini
+
+# Generated signal captures
+detected_iq/
+*.npy
+
+# PCB project files
+lower computer/STM32L0Proj/PCB_Project/

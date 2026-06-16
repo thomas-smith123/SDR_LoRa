@@ -269,7 +269,7 @@ void board_read::maybeEmitDisplaySnapshot(qint64 sampleCount)
     QVector<qint16> newCarryI;
     QVector<qint16> newCarryQ;
     if (keepFromCurrent < displaySnapshotPoints_ && !displayCarryI_.isEmpty()) {
-        const int keepFromCarry = std::min(displaySnapshotPoints_ - keepFromCurrent, displayCarryI_.size());
+        const int keepFromCarry = static_cast<int>(std::min<qint64>(displaySnapshotPoints_ - keepFromCurrent, displayCarryI_.size()));
         newCarryI.reserve(keepFromCarry + keepFromCurrent);
         newCarryQ.reserve(keepFromCarry + keepFromCurrent);
         for (int n = displayCarryI_.size() - keepFromCarry; n < displayCarryI_.size(); ++n) {

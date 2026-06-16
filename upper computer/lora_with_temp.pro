@@ -21,8 +21,30 @@ INCLUDEPATH += \
 
 DEFINES += LORA_USE_FFTW QCUSTOMPLOT_USE_OPENGL
 
-LIBS += -L"$$PROJECT_ROOT/lib" -lfftw3 -liio
-QMAKE_RPATHDIR += "$$PROJECT_ROOT/lib"
+# Platform-specific library configuration
+win32 {
+    # Windows-specific settings
+    FFTW_LIB_DIR = "$$PROJECT_ROOT/third_party/fftw"
+    LIBIIO_LIB_DIR = "$$PROJECT_ROOT/third_party/libiio"
+
+    # Debug uses fftw3d.lib, Release uses fftw3.lib
+    win32:CONFIG(debug, debug|release) {
+        LIBS += "$$FFTW_LIB_DIR/fftw3d.lib"
+    } else:win32:CONFIG(release, debug|release) {
+        LIBS += "$$FFTW_LIB_DIR/fftw3.lib"
+    }
+    # libiio: Use full path to libiio.lib (MSVC linker strips 'lib' prefix from -llibiio -> libio.lib which is wrong)
+    LIBS += "$$LIBIIO_LIB_DIR/libiio.lib"
+
+    LIBS += opengl32.lib glu32.lib
+
+    # Copy runtime DLLs next to the executable after build.
+    QMAKE_POST_LINK += $$quote(powershell -Command "Copy-Item '$$FFTW_LIB_DIR/fftw3.dll' '$$DESTDIR' -Force; Copy-Item '$$LIBIIO_LIB_DIR/libiio.dll' '$$DESTDIR' -Force")
+} else:unix {
+    # Unix/Linux settings
+    LIBS += -L"$$PROJECT_ROOT/lib" -lfftw3 -liio
+    QMAKE_RPATHDIR += "$$PROJECT_ROOT/lib"
+}
 
 # You can make your code fail to compile if it uses deprecated APIs.
 # In order to do so, uncomment the following line.
