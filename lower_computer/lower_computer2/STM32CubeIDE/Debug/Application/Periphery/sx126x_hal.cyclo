@@ -1,0 +1,6 @@
+../Application/Periphery/sx126x_hal.c:99:5:sx126x_get_busy	1
+../Application/Periphery/sx126x_hal.c:11:12:sx126x_wait_busy	3
+../Application/Periphery/sx126x_hal.c:38:21:sx126x_hal_write	5
+../Application/Periphery/sx126x_hal.c:57:21:sx126x_hal_read	5
+../Application/Periphery/sx126x_hal.c:76:21:sx126x_hal_reset	2
+../Application/Periphery/sx126x_hal.c:88:21:sx126x_hal_wakeup	2

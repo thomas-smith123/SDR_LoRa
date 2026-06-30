@@ -1,0 +1,10 @@
+../Application/Periphery/lr_fhss_mac.c:635:16:lr_fhss_extract_bit_in_byte_vector	1
+../Application/Periphery/lr_fhss_mac.c:647:13:lr_fhss_set_bit_in_byte_vector	1
+../Application/Periphery/lr_fhss_mac.c:655:17:lr_fhss_convolution_encode_viterbi_1_2_base	5
+../Application/Periphery/lr_fhss_mac.c:324:14:lr_fhss_get_hop_sequence_count	4
+../Application/Periphery/lr_fhss_mac.c:334:6:lr_fhss_process_parameters	7
+../Application/Periphery/lr_fhss_mac.c:345:18:lr_fhss_get_hop_params	20
+../Application/Periphery/lr_fhss_mac.c:422:10:lr_fhss_get_next_state	4
+../Application/Periphery/lr_fhss_mac.c:444:9:lr_fhss_get_next_freq_in_grid	3
+../Application/Periphery/lr_fhss_mac.c:476:10:lr_fhss_build_frame	25
+../Application/Periphery/lr_fhss_mac.c:585:10:lr_fhss_get_time_on_air_in_ms	1

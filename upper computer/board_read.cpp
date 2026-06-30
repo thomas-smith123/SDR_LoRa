@@ -73,13 +73,28 @@ void board_read::config(float bw=5,float fs=10,float lo=1091)
     displayCarryI_.clear();
     displayCarryQ_.clear();
 #ifndef simulate
-    if(this->config_flag)
-        IIO_ENSURE((ctx = iio_create_context_from_uri(ip)) && "No context","No context");
+    qDebug() << "[board_read] Creating libiio context from URI:" << QString(ip);
     if(this->config_flag)
     {
-        IIO_ENSURE(iio_context_get_devices_count(ctx) > 0 && "No devices","No devices");
-
-        // printf("* Acquiring AD9361 streaming devices\n");
+        ctx = iio_create_context_from_uri(ip);
+        if(!ctx) {
+            qWarning() << "[board_read] iio_create_context_from_uri FAILED - check IP address and network connectivity";
+            config_flag = 0;
+            return;
+        }
+        qDebug() << "[board_read] Context created successfully";
+    }
+    if(this->config_flag)
+    {
+        const int devCount = iio_context_get_devices_count(ctx);
+        qDebug() << "[board_read] Device count:" << devCount;
+        if(devCount > 0) {
+            for(int i = 0; i < devCount; i++) {
+                const char *name = iio_device_name(iio_context_get_device(ctx, i));
+                qDebug() << "[board_read] Device" << i << ":" << name;
+            }
+        }
+        IIO_ENSURE(devCount > 0 && "No devices","No devices");
     }
     //IIO_ENSURE(get_ad9361_stream_dev(ctx, TX, &tx) && "No tx dev found");
     if(this->config_flag)

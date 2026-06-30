@@ -46,3 +46,5 @@ detected_iq/
 
 # PCB project files
 lower computer/STM32L0Proj/PCB_Project/
+tst/
+lower computer/LR20&30-433/
