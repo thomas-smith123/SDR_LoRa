@@ -41,7 +41,12 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
-
+extern volatile uint32_t debugStage;
+void UART_SendStr(const char *str);
+void UART_SendInt(int val);
+void UART_SendHex8(uint8_t val);
+void UART_SendHex16(uint16_t val);
+void UART_SendHex32(uint32_t val);
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/
@@ -63,6 +68,7 @@ void Error_Handler(void);
 #define TXEN_GPIO_Port GPIOA
 #define DIO1_Pin GPIO_PIN_0
 #define DIO1_GPIO_Port GPIOB
+#define DIO1_EXTI_IRQn EXTI0_1_IRQn
 #define DIO2_Pin GPIO_PIN_1
 #define DIO2_GPIO_Port GPIOB
 #define TMP_CTRL_Pin GPIO_PIN_8

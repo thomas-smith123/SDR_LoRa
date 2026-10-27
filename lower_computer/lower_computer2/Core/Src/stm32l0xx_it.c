@@ -55,7 +55,7 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-
+extern UART_HandleTypeDef huart2;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -140,32 +140,34 @@ void SysTick_Handler(void)
 /* please refer to the startup file (startup_stm32l0xx.s).                    */
 /******************************************************************************/
 
-/* USER CODE BEGIN 1 */
 /**
-  * @brief  LoRa DIO1 中断服务函数（PB0）
-  * @note   LoRa 模块通过 DIO1 发出 TX_DONE / RX_DONE / CAD_DONE 等事件
-  *         此函数读取 LoRa IRQ status，设置 radioFlag，并触发 IrqFired 标志
-  *         main 循环中的 DX_Lora_RadioIrqProcess() 会轮询处理
+  * @brief This function handles EXTI line 0 and line 1 interrupts.
   */
-#include "UserConfig.h"
-
 void EXTI0_1_IRQHandler(void)
 {
-    /* 清除 EXTI 挂起位 */
-    if (__HAL_GPIO_EXTI_GET_IT(LCC68_DIO1_PIN) != RESET)
-    {
-        __HAL_GPIO_EXTI_CLEAR_IT(LCC68_DIO1_PIN);
+  /* USER CODE BEGIN EXTI0_1_IRQn 0 */
 
-        /* 从 LoRa 模块读取 IRQ 状态 */
-        sx126x_irq_mask_t irq_status = 0;
-        sx126x_get_irq_status(NULL, &irq_status);
+  /* USER CODE END EXTI0_1_IRQn 0 */
+  HAL_GPIO_EXTI_IRQHandler(DIO1_Pin);
+  /* USER CODE BEGIN EXTI0_1_IRQn 1 */
 
-        /* 保存 IRQ 标志供 DX_Lora_RadioIrqProcess() 处理 */
-        radioFlag = irq_status;
-        IrqFired = true;
-
-        /* 清除 LoRa 内部 IRQ 标志，避免重复触发 */
-        sx126x_clear_irq_status(NULL, SX126X_IRQ_ALL);
-    }
+  /* USER CODE END EXTI0_1_IRQn 1 */
 }
+
+/**
+  * @brief This function handles USART2 global interrupt / USART2 wake-up interrupt through EXTI line 26.
+  */
+void USART2_IRQHandler(void)
+{
+  /* USER CODE BEGIN USART2_IRQn 0 */
+
+  /* USER CODE END USART2_IRQn 0 */
+  HAL_UART_IRQHandler(&huart2);
+  /* USER CODE BEGIN USART2_IRQn 1 */
+
+  /* USER CODE END USART2_IRQn 1 */
+}
+
+/* USER CODE BEGIN 1 */
+
 /* USER CODE END 1 */

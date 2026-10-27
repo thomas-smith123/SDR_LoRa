@@ -1,3 +1,9 @@
+/*
+ * @Date: 2026-06-29 09:51:43
+ * @LastEditors: thomas-smith123 thomas-smith@live.cn
+ * @LastEditTime: 2026-10-26 17:45:19
+ * @FilePath: \LR20&30-433\LR_driver\src\sx126x.h
+ */
 /**
  * @file      sx126x.h
  *

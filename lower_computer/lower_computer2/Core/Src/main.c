@@ -21,9 +21,11 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
-#include <string.h>
 #include "UserConfig.h"
+#include "sx126x.h"
+#include "driver_timer.h"
+#include <stdio.h>
+#include "TMP117.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,15 +35,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define DEVICE_ID                 1U
-#define SAMPLE_INTERVAL_MS        5000U
-#define ADC_REF_MV                3300U
-#define ADC_MAX_VALUE             4095U
-#define TMP117_ADDR               (0x48U << 1)
-#define TMP117_TEMP_REG           0x00U
-#define MLX90393_ADDR             (0x0CU << 1)
-#define MLX90393_CMD_START_ZYX    0x3EU
-#define MLX90393_CMD_READ_ZYX     0x4EU
+#define KEY_UP_GPIO_PIN               LCC68_DIO1_PIN
+#define KEY_UP_GPIO_PORT              LCC68_DIO1_PORT
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -54,13 +49,15 @@ ADC_HandleTypeDef hadc;
 
 I2C_HandleTypeDef hi2c1;
 
-RTC_HandleTypeDef hrtc;
-
 SPI_HandleTypeDef hspi1;
+
+TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim21;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
+static uint32_t dataProcessingTick;
 
 /* USER CODE END PV */
 
@@ -70,101 +67,21 @@ static void MX_GPIO_Init(void);
 static void MX_ADC_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_SPI1_Init(void);
-static void MX_USART2_UART_Init(void);
-static void MX_RTC_Init(void);
-/* USER CODE BEGIN PFP */
-void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_ADC_Init(void);
-static void MX_I2C1_Init(void);
-static void MX_SPI1_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_TIM21_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-static void Enter_Stop(uint32_t sleep_time_s);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-/**
-  * @brief  读取 PA1/ADC_IN1 电压值，并换算成毫伏。
-  * @note   当前按 ADC 参考电压 3.3V、12bit 分辨率直接换算；如果前端有分压电阻，需在此处乘以分压比例。
-  * @retval 电压值，单位 mV。
-  */
-static uint16_t Read_Voltage_mV(void)
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-  uint32_t adc_value = 0U;
-
-  if (HAL_ADC_Start(&hadc) == HAL_OK)
-  {
-    if (HAL_ADC_PollForConversion(&hadc, 20) == HAL_OK)
+    if(GPIO_Pin == KEY_UP_GPIO_PIN)
     {
-      adc_value = HAL_ADC_GetValue(&hadc);
+        IrqFired = true;
     }
-    (void)HAL_ADC_Stop(&hadc);
-  }
-
-  return (uint16_t)((adc_value * ADC_REF_MV) / ADC_MAX_VALUE);
-}
-
-/**
-  * @brief  通过 I2C1 读取 TMP117 温度。
-  * @note   TMP117 地址为 0x48，温度寄存器为 0x00；返回值放大 100 倍，便于无浮点格式化。
-  * @retval 温度 x100，例如 2534 表示 25.34 摄氏度。
-  */
-static int16_t Read_TMP117_Temp_x100(void)
-{
-  uint8_t reg = TMP117_TEMP_REG;
-  uint8_t data[2] = {0};
-  int16_t raw;
-
-  if (HAL_I2C_Master_Transmit(&hi2c1, TMP117_ADDR, &reg, 1, 100) != HAL_OK)
-  {
-    return 0;
-  }
-  if (HAL_I2C_Master_Receive(&hi2c1, TMP117_ADDR, data, 2, 100) != HAL_OK)
-  {
-    return 0;
-  }
-
-  raw = (int16_t)((uint16_t)data[0] << 8 | data[1]);
-  return (int16_t)(((int32_t)raw * 100) / 128);
-}
-
-/**
-  * @brief  通过 I2C1 读取 MLX90393 三轴磁场数据。
-  * @note   先发送启动 ZYX 测量命令，再等待转换完成并读取 X/Y/Z 原始值。
-  * @retval X/Y/Z 三轴原始值平均值；如需真实物理单位，需按 MLX90393 配置增益另行换算。
-  */
-static int16_t Read_MLX90393_Mag(void)
-{
-  uint8_t cmd;
-  uint8_t data[7] = {0};
-  int16_t mx;
-  int16_t my;
-  int16_t mz;
-
-  cmd = MLX90393_CMD_START_ZYX;
-  if (HAL_I2C_Master_Transmit(&hi2c1, MLX90393_ADDR, &cmd, 1, 100) != HAL_OK)
-  {
-    return 0;
-  }
-
-  HAL_Delay(20);
-  cmd = MLX90393_CMD_READ_ZYX;
-  if (HAL_I2C_Master_Transmit(&hi2c1, MLX90393_ADDR, &cmd, 1, 100) != HAL_OK)
-  {
-    return 0;
-  }
-  if (HAL_I2C_Master_Receive(&hi2c1, MLX90393_ADDR, data, sizeof(data), 100) != HAL_OK)
-  {
-    return 0;
-  }
-
-  mx = (int16_t)((uint16_t)data[1] << 8 | data[2]);
-  my = (int16_t)((uint16_t)data[3] << 8 | data[4]);
-  mz = (int16_t)((uint16_t)data[5] << 8 | data[6]);
-
-  return (int16_t)(((int32_t)mx + (int32_t)my + (int32_t)mz) / 3);
 }
 /* USER CODE END 0 */
 
@@ -176,20 +93,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  /* ★ 关键：在 MX_GPIO_Init() 之前，先通过寄存器直接关闭 PA8 (TMP_CTRL)
-     PMOS 低电平关闭，切断 LoRa、TMP117、MLX90393 供电
-     避免 LoRa 在 GPIO 初始化期间驱动 PA15 (BUSY) 导致 MCU 卡死
-     
-     注意：PA8 初始化前不能用 HAL_GPIO_WritePin，因为 GPIO 时钟还没开
-     这里直接用寄存器操作 */
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  /* PA8 MODER[17:16] = 01 (Output mode) */
-  GPIOA->MODER &= ~((uint32_t)0x3 << 16);
-  GPIOA->MODER |= ((uint32_t)0x1 << 16);
-  /* PA8 OTYPER[8] = 0 (Push-Pull) */
-  GPIOA->OTYPER &= ~((uint32_t)1 << 8);
-  /* PA8 BSRR[24] = 1 (Reset bit -> PA8 output LOW) */
-  GPIOA->BSRR = ((uint32_t)1 << 24);
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -213,12 +117,16 @@ int main(void)
   MX_ADC_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
+  MX_TIM2_Init();
+  MX_TIM21_Init();
   MX_USART2_UART_Init();
-  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-  /* ★ 启动时配置 DIO1 中断，只需配置一次
-     MCU 从 STOP 唤醒后 EXTI 配置保持不变，后续循环无需重复配置 */
-  DIO1_Init();
+	IrqFired = false;
+	radioFlag = 0x00;
+	LoraInit();
+  dataProcessingTick = HAL_GetTick();
+  HAL_NVIC_EnableIRQ(EXTI0_1_IRQn);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -226,60 +134,18 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-
+		
     /* USER CODE BEGIN 3 */
-	/* ★ 调试心跳：每次循环翻转 PA3(TXEN)，用万用表/逻辑分析仪观察 */
-	HAL_GPIO_TogglePin(TXEN_GPIO_Port, TXEN_Pin);
-	  uint8_t payload[80];
-	  uint16_t volt_mv;
-	  int16_t temp_x100;
-	  int16_t mag;
-	  int len;
-//	  /* 每次被 RTC 唤醒后先打开 PA8 PMOS，给传感器和 LLCC68 上电。 */
-	  HAL_GPIO_WritePin(TMP_CTRL_GPIO_Port, TMP_CTRL_Pin, GPIO_PIN_SET);
-//	  /* 等待外设电源稳定。 */
-	  HAL_Delay(20);
-
-	  /* LoRa 模块刚重新上电，内部寄存器丢失，需要重新配置
-     MCU 只是从 STOP 唤醒，GPIO 和中断配置保持不变，无需重新初始化 */
-	  LoraInit();
-////
-////	  /* 依次采集电压、温度、磁场。 */
-	  volt_mv = Read_Voltage_mV();
-	  temp_x100 = Read_TMP117_Temp_x100();
-	  mag = Read_MLX90393_Mag();
-
-	  /* 按 readme 要求拼接发送字符串：ID、TEMP、Volt、MAG。 */
-	  len = snprintf((char *)payload, sizeof(payload), "ID:%04u,TEMP:%d.%02d,Volt:%umV,MAG:%d.",
-					 (unsigned int)DEVICE_ID,
-					 (int)(temp_x100 / 100),
-					 (int)((temp_x100 < 0) ? -(temp_x100 % 100) : (temp_x100 % 100)),
-					 (unsigned int)volt_mv,
-					 (int)mag);
-
-	  if (len > 0)
-	  {
-		/* LoraDataSend 内部会执行数据发送，启动 TX 后直接返回。 */
-		LoraDataSend(payload, (uint8_t)((len < (int)sizeof(payload)) ? len : (int)(sizeof(payload) - 1U)));
-		/* 等待 TX_DONE 中断，期间轮询处理 LLCC68 DIO1 事件；超时后也继续进入低功耗。 */
-		for (uint32_t wait_start = HAL_GetTick(); (uint32_t)(HAL_GetTick() - wait_start) < 2000U; )
-		{
-		  DX_Lora_RadioIrqProcess();
-		}
-		/* 让 LLCC68 进入 sleep，减少 PA8 关闭前的额外消耗。 */
-		sx126x_set_sleep(NULL, SX126X_SLEEP_CFG_COLD_START);
-	  }
-
-	/* ★ 关键：PMOS 关闭前，关闭 DIO1 中断，避免 LoRa 断电后误触发 */
-	HAL_NVIC_DisableIRQ(EXTI0_1_IRQn);
-	__HAL_GPIO_EXTI_CLEAR_IT(LCC68_DIO1_PIN);
-	/* ★ 诊断：暂时注释 PMOS 关闭，看能否进入 Enter_Stop */
-//	HAL_GPIO_WritePin(TMP_CTRL_GPIO_Port, TMP_CTRL_Pin, GPIO_PIN_RESET);
-	HAL_Delay(200);  // 短暂延迟确认代码继续
-	/* 配置 RTC 唤醒，然后 MCU 进入 STOP 低功耗模式（睡眠时间 1 秒）。 */
-	Enter_Stop(1);
-	/* ★ RTC 唤醒后，重新开启 DIO1 中断 */
-	HAL_NVIC_EnableIRQ(EXTI0_1_IRQn);
+    DX_Lora_RadioIrqProcess();
+#if TEST
+    Data_Processing();
+#else
+    if ((uint32_t)(HAL_GetTick() - dataProcessingTick) >= 1000U)
+    {
+      dataProcessingTick = HAL_GetTick();
+      Data_Processing();
+    }
+#endif
   }
   /* USER CODE END 3 */
 }
@@ -301,10 +167,9 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLLMUL_4;
@@ -327,11 +192,9 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_I2C1
-                              |RCC_PERIPHCLK_RTC;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_I2C1;
   PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
   PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_PCLK1;
-  PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
@@ -443,42 +306,6 @@ static void MX_I2C1_Init(void)
 }
 
 /**
-  * @brief RTC Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_RTC_Init(void)
-{
-
-  /* USER CODE BEGIN RTC_Init 0 */
-
-  /* USER CODE END RTC_Init 0 */
-
-  /* USER CODE BEGIN RTC_Init 1 */
-
-  /* USER CODE END RTC_Init 1 */
-
-  /** Initialize RTC Only
-  */
-  hrtc.Instance = RTC;
-  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
-  hrtc.Init.AsynchPrediv = 127;
-  hrtc.Init.SynchPrediv = 255;
-  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
-  hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
-  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
-  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
-  if (HAL_RTC_Init(&hrtc) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN RTC_Init 2 */
-
-  /* USER CODE END RTC_Init 2 */
-
-}
-
-/**
   * @brief SPI1 Initialization Function
   * @param None
   * @retval None
@@ -500,8 +327,8 @@ static void MX_SPI1_Init(void)
   hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi1.Init.NSS = SPI_NSS_HARD_INPUT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -513,6 +340,96 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 32-1;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 0;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM21 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM21_Init(void)
+{
+
+  /* USER CODE BEGIN TIM21_Init 0 */
+
+  /* USER CODE END TIM21_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM21_Init 1 */
+
+  /* USER CODE END TIM21_Init 1 */
+  htim21.Instance = TIM21;
+  htim21.Init.Prescaler = 1599;
+  htim21.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim21.Init.Period = 100;
+  htim21.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim21.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim21) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim21, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim21, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM21_Init 2 */
+
+  /* USER CODE END TIM21_Init 2 */
 
 }
 
@@ -546,7 +463,6 @@ static void MX_USART2_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART2_Init 2 */
-
   /* USER CODE END USART2_Init 2 */
 
 }
@@ -560,86 +476,100 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 /* USER CODE BEGIN MX_GPIO_Init_1 */
-  /* ★ 关键：LoRa 模块的 BUSY 引脚接在 PA15 上，PA15 默认是 JTAG 引脚
-     解决办法：
-     1. 先保持 NRST_LORA = LOW（LoRa 复位），让 LoRa 不上电
-     2. GPIO 初始化完成后再释放 LoRa
-     
-     注意：STM32L0 的 DBGMCU_CR 设置不当会导致调试器无法连接
-     如果需要释放 JTAG，请在 STM32CubeMX 中 System Core -> SYSCFG 中设置 */
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
+  HAL_GPIO_WritePin(LCC68_NSS_PORT, LCC68_NSS_PIN, GPIO_PIN_SET);
+  GPIO_InitStruct.Pin = LCC68_NSS_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(LCC68_NSS_PORT, &GPIO_InitStruct);
+
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, RXEN_Pin|TXEN_Pin|TMP_CTRL_Pin, GPIO_PIN_RESET);
 
-  /* ★ 先设置 NRST_LORA 为 LOW（保持 LoRa 复位），避免初始化期间 LoRa 驱动 SPI 引脚 */
-  HAL_GPIO_WritePin(GPIOB, NRST_LORA_Pin, GPIO_PIN_RESET);
-
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, DIO1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(NRST_LORA_GPIO_Port, NRST_LORA_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : RXEN_Pin TXEN_Pin TMP_CTRL_Pin */
-  GPIO_InitStruct.Pin = RXEN_Pin|TXEN_Pin|TMP_CTRL_Pin;
+  /*Configure GPIO pins : RXEN_Pin TXEN_Pin */
+  GPIO_InitStruct.Pin = RXEN_Pin|TXEN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : DIO1_Pin NRST_LORA_Pin */
-  GPIO_InitStruct.Pin = DIO1_Pin|NRST_LORA_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  /*Configure GPIO pin : DIO1_Pin */
+  GPIO_InitStruct.Pin = DIO1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(DIO1_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : DIO2_Pin */
   GPIO_InitStruct.Pin = DIO2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(DIO2_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : TMP_CTRL_Pin */
+  GPIO_InitStruct.Pin = TMP_CTRL_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(TMP_CTRL_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : BUSY_Pin */
   GPIO_InitStruct.Pin = BUSY_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(BUSY_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : NRST_LORA_Pin */
+  GPIO_InitStruct.Pin = NRST_LORA_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(NRST_LORA_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI0_1_IRQn, 0, 0);
+  __HAL_GPIO_EXTI_CLEAR_IT(DIO1_Pin);
+  HAL_NVIC_ClearPendingIRQ(EXTI0_1_IRQn);
+
 /* USER CODE BEGIN MX_GPIO_Init_2 */
+
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-static void Enter_Stop(uint32_t sleep_time_s)
+int fputc(int ch, FILE *f)
 {
-  /* ★ 关键：启用 STOP 模式下的调试保持
-     否则 MCU 进入 STOP 后调试器会断连，出现 "Target is not responding" */
-  HAL_DBGMCU_EnableDBGStopMode();
-  HAL_DBGMCU_EnableDBGSleepMode();
+	HAL_UART_Transmit(&huart2, (uint8_t*)&ch, 1, 10);
+	return ch;
+}
 
-  /* 重新配置 RTC WakeUp 前，先关闭上一次唤醒定时器。 */
-  (void)HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
-  /* 清除唤醒标志，避免旧标志导致无法正常进入 STOP。 */
-  __HAL_PWR_CLEAR_FLAG(PWR_FLAG_WU);
 
-  /* RTC CK_SPRE 为 1Hz，计数值为 sleep_time_s - 1 时约 sleep_time_s 秒唤醒一次。 */
-  if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, sleep_time_s - 1U, RTC_WAKEUPCLOCK_CK_SPRE_16BITS) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /* 进入 STOP 前暂停 SysTick，防止 SysTick 周期中断把 MCU 立即唤醒。 */
-  HAL_SuspendTick();
-  HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
-  /* RTC 唤醒后恢复 SysTick，并重新配置系统时钟。 */
-  HAL_ResumeTick();
-
-  SystemClock_Config();
-  /* 唤醒后关闭本轮 wakeup timer，下一次休眠前会重新配置。 */
-  (void)HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
+int fgetc(FILE *f)
+{
+    uint8_t ch = 0;
+    HAL_UART_Receive(&huart2, (uint8_t*)&ch, 1, 10);
+    return (int)ch;
+}
+#pragma import(__use_no_semihosting)
+ 
+struct __FILE
+{
+	int a;
+};
+ 
+FILE __stdout;
+FILE __stdin;
+void _sys_exit(int x)
+{
+	
 }
 /* USER CODE END 4 */
 
